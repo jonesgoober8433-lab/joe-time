@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>喬時間</title>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--tx:#1f1f1d;--tx2:#6b6a65;--bd:#dedcd4;--ac:#2d6cdf;--acbg:#e6efff;--ok:#1f7a3d;--okbg:#e3f4e8;--bad:#b3261e;--badbg:#fbe7e5;--warn:#8a5a00;--warnbg:#fff1d6}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#222220;--tx:#f0eee8;--tx2:#a5a39b;--bd:#3a3935;--ac:#6ea0ff;--acbg:#1f2c47;--ok:#6fd08c;--okbg:#17301f;--bad:#ff8a80;--badbg:#3a1c1a;--warn:#f2c35b;--warnbg:#3a2d10}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif}
+#app{max-width:480px;margin:0 auto;padding:16px 16px 80px}
+h1{font-size:22px;margin:8px 0 2px;font-weight:600}
+h2{font-size:17px;margin:0 0 8px;font-weight:600}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin:12px 0}
+.sub{font-size:13px;color:var(--tx2)}
+label.l{display:block;font-size:13px;color:var(--tx2);margin:14px 0 6px}
+input,select,button{font:inherit;color:var(--tx)}
+input[type=text],input[type=time],input[type=number]{width:100%;height:44px;padding:0 12px;border:1px solid var(--bd);border-radius:10px;background:var(--card)}
+button{min-height:44px;padding:0 14px;border:1px solid var(--bd);border-radius:10px;background:var(--card);cursor:pointer}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600;width:100%;margin-top:14px}
+button.s{min-height:34px;padding:0 10px;font-size:13px}
+button.d{color:var(--bad);border-color:var(--bad)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{min-height:38px;border-radius:999px;padding:0 14px;font-size:14px}
+.chip.on{background:var(--acbg);color:var(--ac);border-color:var(--ac)}
+.row{display:flex;align-items:center;gap:8px}
+.sp{justify-content:space-between}
+.grow{flex:1;min-width:0}
+.pill{display:inline-block;font-size:13px;padding:3px 10px;border-radius:999px;margin:0 6px 6px 0}
+.ok{background:var(--okbg);color:var(--ok)}.bad{background:var(--badbg);color:var(--bad)}.warn{background:var(--warnbg);color:var(--warn)}
+.item{padding:10px 0;border-top:1px solid var(--bd)}
+.item:first-child{border-top:none}
+.err{color:var(--bad);font-size:13px;min-height:18px;margin-top:4px}
+.banner{font-size:13px;padding:8px 12px;border-radius:10px;background:var(--warnbg);color:var(--warn);margin:8px 0}
+.stp{width:38px;padding:0}
+.cnt{min-width:20px;text-align:center;font-weight:600}
+.link{word-break:break-all;font-size:13px;background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0}
+.top{outline:2px solid var(--ok)}
+.pin{min-height:34px;width:38px;padding:0;font-size:16px}
+.pin.off{opacity:.3}
+</style>
+</head>
+<body>
+<div id="app">載入中…</div>
+<script src="config.js"></script>
+<script type="module">
+const DEL = Symbol('del');
+const cfg = window.FIREBASE_CONFIG;
+const LOCAL = !cfg;
+let db;
+
+if (cfg) {
+  const A = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
+  const F = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const f = F.getFirestore(A.initializeApp(cfg));
+  const ref = id => F.doc(f, 'events', id);
+  db = {
+    create: (id, d) => F.setDoc(ref(id), d),
+    sub: (id, cb) => F.onSnapshot(ref(id), s => cb(s.exists() ? s.data() : null)),
+    patch: (id, ops) => {
+      const o = {};
+      for (const k in ops) o[k] = ops[k] === DEL ? F.deleteField() : ops[k];
+      return F.updateDoc(ref(id), o);
+    }
+  };
+} else {
+  const subs = {};
+  const read = id => { try { return JSON.parse(localStorage.getItem('mrs:' + id)); } catch (e) { return null; } };
+  const write = (id, d) => { localStorage.setItem('mrs:' + id, JSON.stringify(d)); (subs[id] || []).forEach(cb => cb(d)); };
+  db = {
+    create: async (id, d) => write(id, d),
+    sub: (id, cb) => { (subs[id] = subs[id] || []).push(cb); cb(read(id)); return () => {}; },
+    patch: async (id, ops) => {
+      const d = read(id);
+      for (const k in ops) {
+        const p = k.split('.'); let o = d;
+        for (let i = 0; i < p.length - 1; i++) o = o[p[i]] = o[p[i]] || {};
+        if (ops[k] === DEL) delete o[p[p.length - 1]]; else o[p[p.length - 1]] = ops[k];
+      }
+      write(id, d);
+    }
+  };
+}
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const rid = () => Math.random().toString(36).slice(2, 10);
+const WK = ['日', '一', '二', '三', '四', '五', '六'];
+const dlabel = d => { const [y, m, dd] = d.split('-').map(Number); return m + '/' + dd + '（' + WK[new Date(y, m - 1, dd).getDay()] + '）'; };
+const tm = m => { m = m % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+const toMin = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+const iso = dt => dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+const base = () => location.href.split('#')[0];
+const rng = r => tm(r.s) + '–' + tm(r.e);
+
+let route = {}, ev = null, unsub = null, form = null, msg = '', draft = null, adminOk = false, coreOk = false, aerr = '';
+const save = ops => db.patch(route.id, ops);
+const sha = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
+
+function parseRoute() {
+  const h = location.hash.replace(/^#\/?/, '').split('/');
+  if (h[0] === 'e' && h[1]) return { v: 'member', id: h[1] };
+  if (h[0] === 'c' && h[1] && h[2]) return { v: 'core', id: h[1], token: h[2] };
+  if (h[0] === 'm' && h[1] && h[2]) return { v: 'admin', id: h[1], key: h[2] };
+  return { v: 'new' };
+}
+
+function init() {
+  if (unsub) { unsub(); unsub = null; }
+  route = parseRoute(); ev = null; form = null; msg = ''; aerr = ''; adminOk = false; coreOk = false;
+  if (route.v === 'new') { draft = draft || newDraft(); render(); return; }
+  unsub = db.sub(route.id, async d => {
+    ev = d;
+    if (d && route.v === 'admin') adminOk = (await sha(route.key)) === d.adminHash;
+    if (d && route.v === 'core') coreOk = (await sha(route.token)) === d.coreHash;
+    if (!form) render(); else if (document.activeElement && /INPUT/.test(document.activeElement.tagName)) return; else render();
+  });
+}
+window.addEventListener('hashchange', init);
+
+function newDraft() {
+  const days = [], t = new Date();
+  for (let i = 0; i < 14; i++) { const x = new Date(t); x.setDate(t.getDate() + i); days.push(iso(x)); }
+  return { title: '週末聚會', total: 4, dur: 90, days: days, pick: {}, slots: [], err: '', made: null };
+}
+
+const isAdmin = () => route.v === 'admin' && !!ev && adminOk;
+const myKey = () => 'mrs-me:' + route.id;
+const myId = () => { try { return localStorage.getItem(myKey()); } catch (e) { return null; } };
+const members = () => Object.entries((ev && ev.members) || {}).map(([id, m]) => Object.assign({ id }, m)).sort((a, b) => (a.at || 0) - (b.at || 0));
+const winsFor = d => ((ev && ev.windows) || {})[d] || [];
+const hasWins = () => !!ev && Object.keys(ev.windows || {}).length > 0;
+const inWin = (d, r) => winsFor(d).some(w => r.s >= w.s && r.e <= w.e);
+const sig = pins => JSON.stringify(pins.map(m => [m.id, m.avail || {}]).sort((a, b) => a[0] < b[0] ? -1 : 1));
+
+function intersect(lists) {
+  let cur = lists[0].map(x => ({ s: x.s, e: x.e }));
+  for (let i = 1; i < lists.length; i++) {
+    const nxt = [];
+    for (const a of cur) for (const b of lists[i]) { const s = Math.max(a.s, b.s), e = Math.min(a.e, b.e); if (e > s) nxt.push({ s, e }); }
+    cur = nxt;
+  }
+  return cur;
+}
+
+function computeWindows(pins) {
+  const w = {};
+  for (const d of ev.days) {
+    const lists = pins.map(m => (m.avail || {})[d] || []);
+    if (!lists.length || lists.some(l => !l.length)) continue;
+    const r = intersect(lists).filter(x => x.e - x.s >= ev.dur);
+    if (r.length) w[d] = r;
+  }
+  return w;
+}
+
+function calc(date) {
+  const all = members(), mains = all.filter(m => m.st === 'main'), pins = all.filter(m => m.pin);
+  const cover = (m, s) => ((m.avail || {})[date] || []).some(r => r.s <= s && r.e >= s + ev.dur);
+  let best = null;
+  for (let s = 360; s + ev.dur <= 1800; s += 10) {
+    if (hasWins() && !winsFor(date).some(w => s >= w.s && s + ev.dur <= w.e)) continue;
+    const set = mains.filter(m => cover(m, s));
+    const miss = ev.slots.filter(sl => set.filter(m => (m.tags || []).includes(sl.n)).length < sl.c).map(sl => sl.n);
+    const missPin = pins.filter(p => !cover(p, s)).map(p => p.gid);
+    const score = set.length * 10 - miss.length * 3 - missPin.length * 100;
+    if (!best || score > best.score) best = { s, set, miss, missPin, score, ok: set.length >= ev.total && !miss.length && !missPin.length };
+  }
+  return best || { s: 0, set: [], miss: [], missPin: [], score: -999, ok: false, none: true };
+}
+
+function coverage() {
+  const main = members().filter(m => m.st === 'main');
+  return ev.slots.map(sl => ({ n: sl.n, need: sl.c, c: main.filter(m => (m.tags || []).includes(sl.n)).length }));
+}
+
+function rosterHtml(admin) {
+  const ms = members(), main = ms.filter(m => m.st === 'main'), wait = ms.filter(m => m.st !== 'main');
+  let h = '<div class="card"><h2>目前名單</h2>';
+  if (admin) h += coverage().map(c => '<span class="pill ' + (c.c >= c.need ? 'ok' : 'bad') + '">' + esc(c.n) + ' ' + c.c + '/' + c.need + (c.c >= c.need ? '' : ' 缺') + '</span>').join('') +
+    '<span class="pill ' + (main.length >= ev.total ? 'ok' : 'warn') + '">人數 ' + main.length + '/' + ev.total + '</span>';
+  const row = (m, lab) => '<div class="item row sp"><div class="grow"><div>' + esc(m.gid) + (admin && m.group === 'core' ? ' <span class="pill warn" style="margin:0 0 0 4px">必到連結</span>' : '') + '</div><div class="sub">' + (m.tags && m.tags.length ? esc(m.tags.join('、')) : '一般參加') + '</div></div>' +
+    (admin ? '<button class="pin' + (m.pin ? '' : ' off') + '" data-a="pin" data-id="' + m.id + '" aria-label="釘選為必到">📌</button><button class="s" data-a="mv" data-id="' + m.id + '">' + lab + '</button><button class="s" data-a="edit" data-id="' + m.id + '">修改</button><button class="s d" data-a="del" data-id="' + m.id + '">刪除</button>' : '') + '</div>';
+  h += '<p class="sub" style="margin:10px 0 0">正選（' + main.length + '）</p>' + (main.map(m => row(m, '移候補')).join('') || '<p class="sub">還沒有人</p>');
+  h += '<p class="sub" style="margin:10px 0 0">候補（' + wait.length + '）</p>' + (wait.map(m => row(m, '升正選')).join('') || '<p class="sub">沒有候補</p>');
+  return h + '</div>';
+}
+
+function stageHtml() {
+  const ms = members(), pins = ms.filter(m => m.pin), fromCore = ms.filter(m => m.group === 'core').length, open = ev.phase === 'open';
+  const stale = hasWins() && ev.lockSig !== sig(pins);
+  let h = '<div class="card"><h2>' + (open ? '階段 2：已開放給其他人' : '階段 1：等必到的人填寫') + '</h2>';
+  h += '<p class="sub" style="margin-top:0">必到專用連結已填 ' + fromCore + ' 人；已 📌 釘選 ' + pins.length + ' 人（在下方名單點 📌 增減）。</p>';
+  if (hasWins()) {
+    h += '<p class="sub" style="margin:8px 0 4px">剩餘可填時間（其他人只能在這裡面填）：</p>';
+    Object.keys(ev.windows).sort().forEach(d => { h += '<div style="font-size:14px">' + dlabel(d) + '　' + ev.windows[d].map(rng).join('、') + '</div>'; });
+  }
+  if (stale) h += '<div class="banner">釘選的人或他們的時間有變動，剩餘時間還是舊的。按下面的按鈕重新計算。</div>';
+  h += '<div class="err" id="aerr">' + esc(aerr) + '</div>';
+  if (!open) h += '<button class="p" data-a="lock" data-o="1" style="margin-top:6px">鎖定釘選時間，開放給其他人</button>';
+  else h += '<button class="p" data-a="lock" data-o="0" style="margin-top:6px">重新計算剩餘時間</button><button style="width:100%;margin-top:8px" data-a="pause">暫停開放（一般連結會顯示準備中）</button>';
+  return h + '</div>';
+}
+
+function timesHtml(admin) {
+  const days = (ev.days || []).map(d => ({ d, b: calc(d) })).filter(x => !x.b.none).sort((a, b) => b.b.score - a.b.score);
+  let h = '<div class="card"><h2>最適合的時段（只有主辦看得到）</h2><p class="sub" style="margin-top:0">整段 ' + ev.dur + ' 分鐘、被釘選的人都有空，再看誰最多人</p>';
+  if (ev.final) h += '<div class="pill ok" style="display:block;font-size:14px;padding:8px 12px">已定案：' + dlabel(ev.final.date) + ' ' + tm(ev.final.s) + '–' + tm(ev.final.s + ev.dur) + '</div>';
+  if (!days.length) h += '<p class="sub">還沒有可以算的時段。</p>';
+  days.slice(0, 4).forEach(x => {
+    const b = x.b;
+    h += '<div class="item"><div class="row sp"><b>' + dlabel(x.d) + (b.set.length ? ' ' + tm(b.s) + '–' + tm(b.s + ev.dur) : '') + '</b><span class="pill ' + (b.ok ? 'ok' : 'warn') + '" style="margin:0">' + (b.ok ? '可成團' : b.set.length + '/' + ev.total + ' 人') + '</span></div>' +
+      '<div class="sub">' + (b.set.length ? '有空：' + esc(b.set.map(m => m.gid).join('、')) : '這天沒有人有空') + (b.missPin.length ? '　釘選者沒空：' + esc(b.missPin.join('、')) : '') + (b.miss.length ? '　缺：' + esc(b.miss.join('、')) : '') + '</div>' +
+      (b.set.length ? '<button class="s" style="margin-top:6px" data-a="final" data-d="' + x.d + '" data-s="' + b.s + '">定案這個時段</button>' : '') + '</div>';
+  });
+  return h + '</div>';
+}
+
+function formHtml() {
+  const f = form, gen = f.mode === 'gen';
+  const days = gen ? ev.days.filter(d => winsFor(d).length) : ev.days;
+  let h = '<div class="card"><h2>' + (f.mid ? (f.mode === 'admin' && f.mid !== myId() ? '修改參加者' : '修改我的時間') : (f.mode === 'core' ? '請填你有空的時間' : '我要報名')) + '</h2>';
+  h += '<label class="l">名字</label><input type="text" id="gid" value="' + esc(f.gid) + '" placeholder="例如：小明">';
+  if (f.mode !== 'core' && ev.slots.length) h += '<label class="l">我符合哪些條件（可複選，沒有就不選）</label><div class="chips">' + ev.slots.map(s => '<button class="chip' + (f.tags.includes(s.n) ? ' on' : '') + '" data-a="tag" data-n="' + esc(s.n) + '">' + esc(s.n) + '</button>').join('') + '</div>';
+  h += '<label class="l">' + (gen ? '下面只列出還可以填的時間，在裡面選你有空的（可縮短、可多段）' : '哪天幾點有空？（可多段、可跨午夜；沒空就留空）') + '</label>';
+  days.forEach(d => {
+    const rs = f.avail[d] || [];
+    h += '<div class="item"><div class="row sp"><b>' + dlabel(d) + '</b><button class="s" data-a="addr" data-d="' + d + '">＋ 加一段</button></div>';
+    if (gen) h += '<div class="sub">可填：' + winsFor(d).map(rng).join('、') + '</div>';
+    rs.forEach((r, i) => { h += '<div class="row" style="margin-top:6px"><input type="time" data-a="rt" data-d="' + d + '" data-i="' + i + '" data-k="s" value="' + tm(r.s) + '"><span class="sub">到</span><input type="time" data-a="rt" data-d="' + d + '" data-i="' + i + '" data-k="e" value="' + tm(r.e) + '"><button class="s d" data-a="delr" data-d="' + d + '" data-i="' + i + '" aria-label="刪除這段">✕</button></div>'; });
+    h += '</div>';
+  });
+  h += '<div class="err" id="ferr">' + esc(f.err || '') + '</div>';
+  h += '<button class="p" data-a="save">送出</button><button style="width:100%;margin-top:8px" data-a="cancel">取消</button></div>';
+  return h;
+}
+
+function newHtml() {
+  const d = draft;
+  let h = '<h1>喬時間</h1><p class="sub">約吃飯、開會、旅行都能用。不用登入，建好把連結貼給大家。</p>';
+  if (LOCAL) h += '<div class="banner">目前是測試模式：資料只存在這支手機，參加者看不到。接上 Firebase 後才會互通（步驟見 README）。</div>';
+  if (d.made) {
+    const u = { c: base() + '#/c/' + d.made.id + '/' + d.made.ctoken, e: base() + '#/e/' + d.made.id, m: base() + '#/m/' + d.made.id + '/' + d.made.key };
+    const blk = (t, sub, k) => '<p class="sub" style="margin-top:16px"><b>' + t + '</b>　' + sub + '</p><div class="link">' + esc(u[k]) + '</div><button class="s" data-a="copy" data-t="' + esc(u[k]) + '">複製</button>';
+    return h + '<div class="card"><h2>活動建好了</h2>' + blk('① 必到專用連結', '先只傳給必到的人', 'c') + blk('② 一般連結', '等你開放後再貼給其他人', 'e') + blk('③ 管理連結', '只有你自己留著', 'm') + '<div class="err" style="color:var(--ok)">' + esc(msg) + '</div>' +
+      '<button class="p" data-a="open">進入管理頁</button><button style="width:100%;margin-top:8px" data-a="again">再建一個活動</button></div>';
+  }
+  h += '<div class="card"><label class="l" style="margin-top:0">活動名稱</label><input type="text" id="title" value="' + esc(d.title) + '">';
+  h += '<label class="l">幾個人才成團</label><div class="row sp"><span>湊滿才算</span><span class="row"><button class="stp" data-a="tot" data-v="-1">−</button><span class="cnt">' + d.total + '</span><button class="stp" data-a="tot" data-v="1">＋</button></span></div>';
+  h += '<label class="l">大概多久（分鐘）</label><div class="chips">' + [30, 60, 90, 120, 180, 240].map(v => '<button class="chip' + (d.dur === v ? ' on' : '') + '" data-a="dur" data-v="' + v + '">' + v + '</button>').join('') + '</div>';
+  h += '<label class="l">候選日期（點選要問的日子）</label><div class="chips">' + d.days.map(x => '<button class="chip' + (d.pick[x] ? ' on' : '') + '" data-a="day" data-d="' + x + '">' + dlabel(x).replace('（', ' ').replace('）', '') + '</button>').join('') + '</div>';
+  h += '<label class="l">特別條件（選填，例如：有車、會主持；至少要有幾個）</label>';
+  d.slots.forEach((s, i) => { h += '<div class="item row sp"><span class="grow">' + esc(s.n) + '</span><button class="stp" data-a="sc" data-i="' + i + '" data-v="-1">−</button><span class="cnt">' + s.c + '</span><button class="stp" data-a="sc" data-i="' + i + '" data-v="1">＋</button><button class="s d" data-a="sdel" data-i="' + i + '">刪除</button></div>'; });
+  h += '<div class="row" style="margin-top:8px"><input type="text" id="sn" placeholder="例如：有車、會主持"><button data-a="sadd" style="white-space:nowrap">新增</button></div>';
+  h += '<div class="err" id="nerr">' + esc(d.err) + '</div><button class="p" data-a="create">建立活動，取得連結</button></div>';
+  return h;
+}
+
+function myEntry() { const id = myId(); return id && ev.members && ev.members[id] ? ev.members[id] : null; }
+
+function render() {
+  const app = $('#app');
+  if (route.v === 'new') { app.innerHTML = newHtml(); return; }
+  if (!ev) { app.innerHTML = '<p class="sub">找不到這個活動，或還在載入。請確認連結是否完整。</p>'; return; }
+  if (route.v === 'admin' && !isAdmin()) { app.innerHTML = '<p class="sub">管理連結不正確。</p>'; return; }
+  if (route.v === 'core' && !coreOk) { app.innerHTML = '<p class="sub">連結不正確。</p>'; return; }
+  const admin = isAdmin();
+  let h = '<h1>' + esc(ev.title) + '</h1><p class="sub">' + ev.total + ' 人・每次 ' + ev.dur + ' 分鐘' + (admin ? '・你是主辦' : '') + '</p>';
+  if (LOCAL) h += '<div class="banner">測試模式：資料只存在這支手機</div>';
+  if (route.v === 'member' && ev.phase !== 'open') { app.innerHTML = h + '<div class="card"><h2>主辦還在準備中</h2><p class="sub">開放後這個連結才能填寫，請稍後再回來看看。</p></div>'; return; }
+  if (ev.final && route.v !== 'core') h += '<div class="pill ok" style="display:block;font-size:14px;padding:8px 12px">已定案：' + dlabel(ev.final.date) + ' ' + tm(ev.final.s) + '–' + tm(ev.final.s + ev.dur) + '</div>';
+  const mine = myEntry();
+  if (route.v === 'core') {
+    if (form) h += formHtml();
+    else {
+      h += '<div class="card"><h2>' + (mine ? '你已送出' : '請填你有空的時間') + '</h2><p class="sub">' + (mine ? '時間若有變動，可以再修改。' : '你是被主辦特別邀請的，請先填好時間。') + '</p>';
+      if (mine) { Object.keys(mine.avail || {}).sort().forEach(d => { h += '<div style="font-size:14px">' + dlabel(d) + '　' + mine.avail[d].map(rng).join('、') + '</div>'; }); }
+      h += '<button class="p" data-a="join">' + (mine ? '修改我的時間' : '開始填寫') + '</button></div>';
+    }
+    app.innerHTML = h; return;
+  }
+  if (admin) h += stageHtml() + linksCard();
+  else if (hasWins()) {
+    h += '<div class="card"><h2>可以填的時間</h2>' + Object.keys(ev.windows).sort().map(d => '<div style="font-size:14px">' + dlabel(d) + '　' + ev.windows[d].map(rng).join('、') + '</div>').join('') + '</div>';
+  }
+  if (form) h += formHtml();
+  else {
+    h += '<button class="p" data-a="join">' + (mine ? '修改我的報名' : '我要報名') + '</button>';
+    if (admin) h += '<button style="width:100%;margin-top:8px" data-a="proxy">主辦代填參加者</button>';
+  }
+  h += rosterHtml(admin);
+  if (admin) h += timesHtml(admin) + '<div class="card"><h2>貼到群組</h2><button class="p" style="margin-top:0" data-a="group">複製名單與時段文字</button><div class="err" style="color:var(--ok)">' + esc(msg) + '</div></div>';
+  app.innerHTML = h;
+}
+
+const getCt = () => { try { return localStorage.getItem('mrs-ct:' + route.id); } catch (e) { return null; } };
+function linksCard() {
+  const ct = getCt(), ue = base() + '#/e/' + route.id, uc = ct ? base() + '#/c/' + route.id + '/' + ct : '';
+  let h = '<div class="card"><h2>連結</h2><p class="sub" style="margin:0 0 4px"><b>必到專用連結</b>　先只傳給必到的人</p>';
+  if (uc) h += '<div class="link">' + esc(uc) + '</div><button class="s" data-a="copy" data-t="' + esc(uc) + '">複製必到連結</button>';
+  else h += '<p class="sub">這台裝置沒有存必到連結。</p>';
+  h += '<button class="s" data-a="regen" style="margin-left:6px">重新產生必到連結</button><p class="sub" style="margin:2px 0 0">重新產生後，舊的必到連結會失效。</p>';
+  h += '<p class="sub" style="margin:14px 0 4px"><b>一般連結</b>　開放後再貼給其他人</p><div class="link">' + esc(ue) + '</div><button class="s" data-a="copy" data-t="' + esc(ue) + '">複製一般連結</button>';
+  return h + '<div class="err" style="color:var(--ok)">' + esc(msg) + '</div></div>';
+}
+
+function openForm(mid) {
+  const m = mid && ev.members && ev.members[mid];
+  const mode = route.v === 'core' ? 'core' : isAdmin() ? 'admin' : 'gen';
+  form = { mode, mid: mid || null, gid: m ? m.gid : '', tags: m ? (m.tags || []).slice() : [], avail: m ? JSON.parse(JSON.stringify(m.avail || {})) : {}, err: '' };
+  render();
+}
+
+function saveForm() {
+  const gid = ($('#gid').value || '').trim();
+  const err = t => { form.err = t; $('#ferr').textContent = t; };
+  if (!gid) return err('請輸入名字');
+  if (members().some(m => m.id !== form.mid && m.gid.toLowerCase() === gid.toLowerCase())) return err('這個名字已經有人填了');
+  const avail = {};
+  for (const d in form.avail) {
+    const rs = form.avail[d];
+    for (const r of rs) {
+      if (r.s == null || r.e == null || isNaN(r.s) || isNaN(r.e) || r.s === r.e) return err(dlabel(d) + ' 有一段時間沒填完整');
+      if (form.mode === 'gen' && !inWin(d, r)) return err(dlabel(d) + ' ' + rng(r) + ' 超出可填的時間');
+    }
+    if (rs.length) avail[d] = rs;
+  }
+  if (form.mode !== 'admin' && !Object.keys(avail).length) return err('至少填一段有空的時間');
+  const id = form.mid || rid();
+  const old = ev.members && ev.members[id];
+  const mainCount = members().filter(m => m.id !== id && m.st === 'main').length;
+  const m = { gid, tags: form.tags, avail, st: old ? old.st : (form.mode === 'core' || mainCount < ev.total ? 'main' : 'wait'), group: old ? (old.group || 'gen') : (form.mode === 'core' ? 'core' : 'gen'), at: old ? old.at : Date.now() };
+  if (old && old.pin) m.pin = true;
+  if (!form.mid && !form.proxy) { try { localStorage.setItem(myKey(), id); } catch (e) { } }
+  form = null;
+  save({ ['members.' + id]: m });
+}
+
+function lockAndOpen(open) {
+  const pins = members().filter(m => m.pin);
+  const fail = t => { aerr = t; const e = $('#aerr'); if (e) e.textContent = t; };
+  if (!pins.length) return fail('先在名單上用 📌 釘選至少一位必到的人');
+  const w = computeWindows(pins);
+  if (!Object.keys(w).length) {
+    const blockers = pins.filter(p => Object.keys(computeWindows(pins.filter(x => x.id !== p.id))).length > 0).map(p => p.gid);
+    return fail('釘選的人沒有共同的 ' + ev.dur + ' 分鐘時間。' + (blockers.length ? '拿掉其中一位就有：' + blockers.join('、') : '需要拿掉不只一位，或請他們調整時間。'));
+  }
+  aerr = '';
+  const ops = { windows: w, lockSig: sig(pins) };
+  if (open) ops.phase = 'open';
+  save(ops);
+}
+
+function groupText() {
+  const ms = members(), main = ms.filter(m => m.st === 'main'), wait = ms.filter(m => m.st !== 'main');
+  let t = '【' + ev.title + '】\n';
+  t += ev.final ? '時間：' + dlabel(ev.final.date) + ' ' + tm(ev.final.s) + '–' + tm(ev.final.s + ev.dur) + '\n' : '時間：尚未定案\n';
+  t += '名單：\n' + main.map(m => '・' + m.gid + (m.tags && m.tags.length ? '（' + m.tags.join('、') + '）' : '')).join('\n');
+  if (wait.length) t += '\n候補：\n' + wait.map(m => '・' + m.gid).join('\n');
+  return t;
+}
+
+async function copy(t) { try { await navigator.clipboard.writeText(t); return true; } catch (e) { return false; } }
+
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.a === 'rt' && form) {
+    const r = form.avail[t.dataset.d][+t.dataset.i];
+    r[t.dataset.k] = t.value ? toMin(t.value) : null;
+    if (t.dataset.k === 'e' && r.s != null && r.e != null && r.e <= r.s) r.e += 1440;
+  }
+});
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-a]'); if (!b) return;
+  const a = b.dataset.a, D = b.dataset;
+  if (route.v === 'new') {
+    const d = draft;
+    if (a === 'tot') d.total = Math.max(2, Math.min(12, d.total + +D.v));
+    else if (a === 'dur') d.dur = +D.v;
+    else if (a === 'day') { if (d.pick[D.d]) delete d.pick[D.d]; else d.pick[D.d] = 1; }
+    else if (a === 'sc') d.slots[+D.i].c = Math.max(1, Math.min(6, d.slots[+D.i].c + +D.v));
+    else if (a === 'sdel') d.slots.splice(+D.i, 1);
+    else if (a === 'sadd') { const n = ($('#sn').value || '').trim(); if (!n) d.err = '先輸入條件名稱'; else if (d.slots.some(s => s.n === n)) d.err = '這個條件已經有了'; else { d.slots.push({ n, c: 1 }); d.err = ''; } }
+    else if (a === 'create') {
+      d.title = ($('#title').value || '').trim();
+      const days = d.days.filter(x => d.pick[x]);
+      if (!d.title) d.err = '請輸入活動名稱'; else if (!days.length) d.err = '至少選一個候選日期';
+      else {
+        d.err = ''; const id = rid() + rid(), key = rid() + rid(), ctoken = rid() + rid();
+        await db.create(id, { title: d.title, total: d.total, dur: d.dur, days, slots: d.slots, phase: 'prep', windows: {}, lockSig: '', adminHash: await sha(key), coreHash: await sha(ctoken), members: {}, createdAt: Date.now(), expireAt: new Date(Date.now() + 14 * 864e5) });
+        d.made = { id, key, ctoken };
+        try { localStorage.setItem('mrs-ct:' + id, ctoken); } catch (e) { }
+      }
+    }
+    else if (a === 'copy') { msg = (await copy(D.t)) ? '已複製' : '複製失敗，請長按連結手動複製'; }
+    else if (a === 'open') { location.hash = '#/m/' + draft.made.id + '/' + draft.made.key; draft = null; return; }
+    else if (a === 'again') draft = newDraft();
+    if (a !== 'create' && a !== 'sadd') { const t = $('#title'); if (t) d.title = t.value; }
+    render(); return;
+  }
+  if (!ev) return;
+  const admin = isAdmin();
+  if (a === 'join') openForm(myEntry() ? myId() : null);
+  else if (admin && a === 'proxy') { openForm(null); form.proxy = true; }
+  else if (admin && a === 'edit') openForm(D.id);
+  else if (a === 'tag') { const g = $('#gid'); if (g) form.gid = g.value; const i = form.tags.indexOf(D.n); if (i < 0) form.tags.push(D.n); else form.tags.splice(i, 1); render(); }
+  else if (a === 'addr') { const g = $('#gid'); if (g) form.gid = g.value; const w = winsFor(D.d)[0]; (form.avail[D.d] = form.avail[D.d] || []).push(form.mode === 'gen' && w ? { s: w.s, e: w.e } : { s: 540, e: 720 }); render(); }
+  else if (a === 'delr') { const g = $('#gid'); if (g) form.gid = g.value; form.avail[D.d].splice(+D.i, 1); render(); }
+  else if (a === 'save') saveForm();
+  else if (a === 'cancel') { form = null; render(); }
+  else if (admin && a === 'pin') { const m = ev.members[D.id]; save({ ['members.' + D.id + '.pin']: !m.pin }); }
+  else if (admin && a === 'lock') { lockAndOpen(D.o === '1'); render(); }
+  else if (admin && a === 'pause') save({ phase: 'prep' });
+  else if (admin && a === 'regen') { const t = rid() + rid(); try { localStorage.setItem('mrs-ct:' + route.id, t); } catch (e) { } save({ coreHash: await sha(t) }); msg = '已重新產生，舊連結失效'; render(); }
+  else if (admin && a === 'mv') { const m = ev.members[D.id]; save({ ['members.' + D.id + '.st']: m.st === 'main' ? 'wait' : 'main' }); }
+  else if (admin && a === 'del') { if (confirm('確定刪除 ' + ev.members[D.id].gid + '？')) save({ ['members.' + D.id]: DEL }); }
+  else if (admin && a === 'final') save({ final: { date: D.d, s: +D.s } });
+  else if (admin && a === 'group') { msg = (await copy(groupText())) ? '已複製，貼到群組即可' : '複製失敗'; render(); }
+  else if (a === 'copy') { msg = (await copy(D.t)) ? '已複製' : '複製失敗'; render(); }
+});
+
+init();
+</script>
+</body>
+</html>

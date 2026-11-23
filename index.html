@@ -13,6 +13,10 @@
 body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.65 "Noto Sans TC","PingFang TC",-apple-system,"Microsoft JhengHei",sans-serif;-webkit-text-size-adjust:100%}
 #app{max-width:720px;margin:0 auto;padding:20px 16px 120px}
 .narrow{max-width:560px;margin:0 auto}
+.top{display:flex;justify-content:space-between;align-items:center;margin:0 0 14px}
+.top .brand{margin:0;text-decoration:none}
+a.ico{font-size:14px;color:var(--ac);text-decoration:none;border:1px solid var(--bd);background:var(--card);border-radius:999px;padding:7px 14px;font-weight:500;white-space:nowrap}
+a.ico:hover{border-color:var(--ac)}
 .brand{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--ac);font-size:15px;letter-spacing:.04em;margin:0 0 14px}
 .brand i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--gold)}
 h1{font-size:26px;line-height:1.3;margin:4px 0 4px;font-weight:700;color:var(--acd)}
@@ -102,13 +106,18 @@ const DEL = Symbol('del');
 const cfg = window.FIREBASE_CONFIG;
 const LOCAL = !cfg;
 let db;
+let auth = null, AU = null, user = null, authMsg = '';
 
 if (cfg) {
   const A = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
   const F = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
-  const f = F.getFirestore(A.initializeApp(cfg));
+  const app0 = A.initializeApp(cfg);
+  const f = F.getFirestore(app0);
+  try { AU = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'); auth = AU.getAuth(app0); } catch (e) { AU = null; auth = null; }
   const ref = id => F.doc(f, 'events', id);
   db = {
+    mineList: async uid => (await F.getDocs(F.collection(f, 'users', uid, 'events'))).docs.map(x => x.data()),
+    minePut: (uid, rec) => F.setDoc(F.doc(f, 'users', uid, 'events', rec.id), rec),
     create: (id, d) => F.setDoc(ref(id), d),
     sub: (id, cb) => F.onSnapshot(ref(id), s => cb(s.exists() ? s.data() : null)),
     patch: (id, ops) => {
@@ -122,6 +131,7 @@ if (cfg) {
   const read = id => { try { return JSON.parse(localStorage.getItem('mrs:' + id)); } catch (e) { return null; } };
   const write = (id, d) => { localStorage.setItem('mrs:' + id, JSON.stringify(d)); (subs[id] || []).forEach(cb => cb(d)); };
   db = {
+    mineList: async () => [], minePut: async () => { },
     create: async (id, d) => write(id, d),
     sub: (id, cb) => { (subs[id] = subs[id] || []).push(cb); cb(read(id)); return () => {}; },
     patch: async (id, ops) => {
@@ -157,13 +167,91 @@ function parseRoute() {
   if (h[0] === 'e' && h[1]) return { v: 'member', id: h[1] };
   if (h[0] === 'c' && h[1] && h[2]) return { v: 'core', id: h[1], token: h[2] };
   if (h[0] === 'm' && h[1] && h[2]) return { v: 'admin', id: h[1], key: h[2] };
+  if (h[0] === 'mine') return { v: 'mine' };
   return { v: 'new' };
+}
+
+/* ---- 我的活動（本機記憶 + 選填 email 備份）---- */
+const MK = 'mrs-mine';
+const getMine = () => { try { return JSON.parse(localStorage.getItem(MK)) || []; } catch (e) { return []; } };
+const setMine = l => { try { localStorage.setItem(MK, JSON.stringify(l)); } catch (e) { } };
+const clean = o => JSON.parse(JSON.stringify(o));
+function mergeInto(l, rec) {
+  const i = l.findIndex(x => x.id === rec.id);
+  if (i < 0) { l.unshift(clean(rec)); return; }
+  const old = l[i], role = old.role === 'admin' || rec.role === 'admin' ? 'admin' : 'member';
+  l[i] = clean(Object.assign({}, old, rec, { role }));
+}
+const seen = new Set();
+function rememberEvent(rec) {
+  const l = getMine(); mergeInto(l, rec); setMine(l);
+  if (user) db.minePut(user.uid, l.find(x => x.id === rec.id)).catch(() => { });
+}
+function trackEvent() {
+  if (!ev || !route.id) return;
+  let rec = null;
+  if (isAdmin()) rec = { id: route.id, title: ev.title, role: 'admin', key: route.key, ct: getCt() || undefined };
+  else if (myEntry()) rec = { id: route.id, title: ev.title, role: 'member', me: myId() };
+  if (!rec) return;
+  const k = JSON.stringify(rec); if (seen.has(k)) return; seen.add(k);
+  rememberEvent(Object.assign({ at: Date.now() }, rec));
+}
+async function syncMine() {
+  if (!user) return;
+  try {
+    const cloud = await db.mineList(user.uid), l = getMine();
+    cloud.forEach(r => mergeInto(l, r));
+    setMine(l);
+    l.forEach(r => {
+      try {
+        if (r.me && !localStorage.getItem('mrs-me:' + r.id)) localStorage.setItem('mrs-me:' + r.id, r.me);
+        if (r.ct && !localStorage.getItem('mrs-ct:' + r.id)) localStorage.setItem('mrs-ct:' + r.id, r.ct);
+      } catch (e) { }
+    });
+    await Promise.all(l.map(r => db.minePut(user.uid, r)));
+  } catch (e) { authMsg = '備份到雲端失敗（可能還沒完成後台設定）：' + (e.code || e.message); }
+  if (route.v === 'mine') render();
+}
+async function sendLink(email) {
+  if (!auth) return '目前是測試模式，無法寄信。';
+  try {
+    await AU.sendSignInLinkToEmail(auth, email, { url: location.origin + location.pathname, handleCodeInApp: true });
+    try { localStorage.setItem('mrs-email', email); } catch (e) { }
+    return '';
+  } catch (e) { return '寄信失敗（' + (e.code || e.message) + '）。請確認 email，或稍後再試。'; }
+}
+const topbar = () => '<div class="top"><a class="brand" href="#/"><i></i>喬時間</a><a class="ico" href="#/mine" aria-label="我的活動">📋 我的活動</a></div>';
+
+function mineHtml() {
+  const l = getMine(), root = location.origin + location.pathname;
+  let h = '<div class="narrow">' + topbar() + '<h1>我的活動</h1><p class="lead">你在這台裝置建立或報名過的活動，連結都在這裡。</p>';
+  h += '<div class="card"><h2>📧 用 email 找回活動</h2>';
+  if (!auth) h += '<p class="sub" style="margin:0">目前是測試模式，不支援 email 找回。</p>';
+  else if (user) h += '<p class="sub" style="margin-top:0">已用 <b>' + esc(user.email || '') + '</b> 驗證，你的活動會自動備份。換手機只要再用這個 email 驗證就能找回。</p><button class="s" data-a="logout">登出這台裝置</button>';
+  else {
+    let em = ''; try { em = localStorage.getItem('mrs-email') || ''; } catch (e) { }
+    h += '<p class="sub" style="margin-top:0">輸入 email，我們寄一封信給你，點信裡的連結就能找回（或備份）所有活動。不用密碼。</p><input type="text" id="mail" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(em) + '"><button class="p" data-a="sendmail" style="min-height:48px;font-size:16px">寄驗證信</button>';
+  }
+  h += '<div class="err" id="mmsg" style="color:var(--ok)">' + esc(authMsg) + '</div></div>';
+  if (!l.length) h += '<div class="card"><p class="sub" style="margin:0">還沒有活動。建立一個活動，或在朋友的連結報名後，就會出現在這裡。</p></div>';
+  l.forEach(r => {
+    const lk = (name, sub, u) => '<p class="sub" style="margin:12px 0 4px"><b>' + name + '</b>　' + sub + '</p><div class="link">' + esc(u) + '</div><div class="row"><button class="s grow" data-a="copy" data-t="' + esc(u) + '">複製</button><a class="btn s grow" style="min-height:38px;font-size:14px" href="' + esc(u) + '">開啟</a></div>';
+    h += '<div class="card"><div class="row sp"><h2 style="margin:0">' + esc(r.title || '活動') + '</h2><span class="pill ' + (r.role === 'admin' ? 'ok' : 'warn') + '" style="margin:0">' + (r.role === 'admin' ? '主辦' : '參加者') + '</span></div>';
+    if (r.role === 'admin') {
+      h += lk('管理連結', '看結果、定案（只有你自己留著）', root + '#/m/' + r.id + '/' + r.key);
+      if (r.ct) h += lk('必到專用連結', '先傳給一定要到的人', root + '#/c/' + r.id + '/' + r.ct);
+      h += lk('一般連結', '開放後貼給其他人', root + '#/e/' + r.id);
+    } else h += lk('活動連結', '看名單、修改我的時間', root + '#/e/' + r.id);
+    h += '</div>';
+  });
+  return h + '</div>';
 }
 
 function init() {
   if (unsub) { unsub(); unsub = null; }
   route = parseRoute(); ev = null; form = null; msg = ''; aerr = ''; adminOk = false; coreOk = false;
   if (route.v === 'new') { draft = draft || newDraft(); render(); return; }
+  if (route.v === 'mine') { render(); return; }
   unsub = db.sub(route.id, async d => {
     ev = d;
     if (d && route.v === 'admin') adminOk = (await sha(route.key)) === d.adminHash;
@@ -277,6 +365,7 @@ function formHtml() {
   const days = gen ? ev.days.filter(d => winsFor(d).length) : ev.days;
   let h = '<div class="card"><h2>' + (f.mid ? (f.mode === 'admin' && f.mid !== myId() ? '修改參加者' : '修改我的時間') : (f.mode === 'core' ? '請填你有空的時間' : '我要報名')) + '</h2>';
   h += '<label class="l"><span class="num">1</span>你的名字</label><input type="text" id="gid" value="' + esc(f.gid) + '" placeholder="例如：小明">';
+  if (auth && !f.mid && f.mode !== 'admin') h += '<label class="l" for="email">📧 email<small>選填。之後能用它找回你的報名</small></label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(f.email || '') + '">';
   if (f.mode !== 'core' && ev.slots.length) h += '<label class="l">我符合哪些條件<small>可複選，沒有就不選</small></label><div class="chips">' + ev.slots.map(s => '<button class="chip' + (f.tags.includes(s.n) ? ' on' : '') + '" data-a="tag" data-n="' + esc(s.n) + '">' + esc(s.n) + '</button>').join('') + '</div>';
   h += '<label class="l"><span class="num">2</span>' + (gen ? '選你有空的時間<small>只列出還可以填的時段，可縮短、可多段</small>' : '哪天幾點有空？<small>點「加一段」填時間；可多段、可跨午夜；沒空就留空</small>') + '</label>';
   days.forEach(d => {
@@ -304,12 +393,13 @@ function calHtml(d) {
 
 function newHtml() {
   const d = draft;
-  let h = '<div class="narrow"><div class="brand"><i></i>喬時間</div>';
+  let h = '<div class="narrow">' + topbar();
   if (LOCAL) h += '<div class="banner">目前是測試模式：資料只存在這支手機，參加者看不到。接上 Firebase 後才會互通（步驟見 README）。</div>';
   if (d.made) {
     const u = { c: base() + '#/c/' + d.made.id + '/' + d.made.ctoken, e: base() + '#/e/' + d.made.id, m: base() + '#/m/' + d.made.id + '/' + d.made.key };
     const ok = '<div class="err" style="color:var(--ok)">' + esc(msg) + '</div>';
     return h + '<h1>活動建好了 🎉</h1><p class="lead">接下來把連結貼給朋友，大家就能填時間。</p>' +
+      (d.email ? '<div class="banner" style="background:var(--okbg);color:var(--ok)">📧 ' + esc(d.mailMsg || '') + '</div>' : '<div class="banner">連結已存到右上角「📋 我的活動」。想換手機也能找回，可到那裡用 email 驗證。</div>') +
       '<div class="card share-main"><h2><span class="num">1</span>先傳給「一定要到」的朋友</h2><p class="sub" style="margin-top:0">把這條連結貼到群組或私訊。他們填完後，你再開放給其他人。</p><div class="link">' + esc(u.c) + '</div><button class="p copy" data-a="copy" data-t="' + esc(u.c) + '" style="margin-top:6px">複製連結</button>' + ok + '</div>' +
       '<div class="card"><h2><span class="num">2</span>之後再傳給其他人</h2><p class="sub" style="margin-top:0">等你在管理頁按「開放」後，再貼這條。</p><div class="link">' + esc(u.e) + '</div><button class="copy" data-a="copy" data-t="' + esc(u.e) + '">複製連結</button></div>' +
       '<div class="card"><h2>你的管理連結</h2><p class="sub" style="margin-top:0">只有你自己留著，用來看結果、決定日期。建議先加入書籤。</p><div class="link">' + esc(u.m) + '</div><button class="copy" data-a="copy" data-t="' + esc(u.m) + '">複製連結</button></div>' +
@@ -321,6 +411,7 @@ function newHtml() {
   h += '<label class="l" style="margin-top:24px"><span class="num">2</span>選候選日期<small>點一下選取，再點取消，可選很多天</small></label>' + calHtml(d);
   h += '<div class="legend"><span>平日</span><span class="w">週末</span><span class="s">已選</span></div>';
   h += '<div class="picked">' + (picked.length ? '已選 ' + picked.length + ' 天：' + picked.map(x => dlabel(x).replace('（', '').replace('）', '')).join('、') : '還沒選日期') + '</div></div>';
+  if (auth) h += '<div class="card"><label class="l" for="email" style="margin-top:0">📧 你的 email<small>選填，但建議填</small></label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(d.email || '') + '"><p class="sub" style="margin:8px 0 0">這是之後<b>找回活動連結</b>的方式：換手機或弄丟連結時，用這個 email 驗證就能找回。只用來寄驗證信，不會發廣告。</p></div>';
   h += '<div class="card"><button class="adv" data-a="adv" aria-expanded="' + (d.adv ? 'true' : 'false') + '"><span>進階選項 <span class="sub">' + d.total + ' 人以上成團・約 ' + durL(d.dur) + (d.slots.length ? '・' + d.slots.length + ' 項條件' : '') + '</span></span><span>' + (d.adv ? '▲' : '▼') + '</span></button>';
   if (d.adv) {
     h += '<div class="adv-body"><label class="l">至少幾個人能來才成團</label><div class="row sp"><span class="sub">湊到這個人數，結果才會顯示「可成團」</span><span class="row"><button class="stp" data-a="tot" data-v="-1" aria-label="減少">−</button><span class="cnt">' + d.total + '</span><button class="stp" data-a="tot" data-v="1" aria-label="增加">＋</button></span></div>';
@@ -361,11 +452,13 @@ function myEntry() { const id = myId(); return id && ev.members && ev.members[id
 function render() {
   const app = $('#app');
   if (route.v === 'new') { app.innerHTML = newHtml(); return; }
+  if (route.v === 'mine') { app.innerHTML = mineHtml(); return; }
   if (!ev) { app.innerHTML = '<p class="sub">找不到這個活動，或還在載入。請確認連結是否完整。</p>'; return; }
   if (route.v === 'admin' && !isAdmin()) { app.innerHTML = '<p class="sub">管理連結不正確。</p>'; return; }
   if (route.v === 'core' && !coreOk) { app.innerHTML = '<p class="sub">連結不正確。</p>'; return; }
   const admin = isAdmin();
-  let h = '<div class="brand"><i></i>喬時間</div><h1>' + esc(ev.title) + '</h1><p class="sub">至少 ' + ev.total + ' 人成團・約 ' + durL(ev.dur) + (admin ? '・你是主辦' : '') + '</p>';
+  trackEvent();
+  let h = topbar() + '<h1>' + esc(ev.title) + '</h1><p class="sub">至少 ' + ev.total + ' 人成團・約 ' + durL(ev.dur) + (admin ? '・你是主辦' : '') + '</p>';
   if (LOCAL) h += '<div class="banner">測試模式：資料只存在這支手機</div>';
   if (route.v === 'member' && ev.phase !== 'open') { app.innerHTML = h + '<div class="card"><h2>主辦還在準備中</h2><p class="sub">開放後這個連結才能填寫，請稍後再回來看看。</p></div>'; return; }
   if (ev.final && route.v !== 'core') h += '<div class="pill ok" style="display:block;font-size:14px;padding:8px 12px">已定案：' + dlabel(ev.final.date) + ' ' + tm(ev.final.s) + '–' + tm(ev.final.s + ev.dur) + '</div>';
@@ -418,6 +511,8 @@ function saveForm() {
   const gid = ($('#gid').value || '').trim();
   const err = t => { form.err = t; $('#ferr').textContent = t; };
   if (!gid) return err('請輸入名字');
+  const em1 = $('#email'), mail = em1 ? em1.value.trim() : '';
+  if (mail && !/^\S+@\S+\.\S+$/.test(mail)) return err('email 格式不太對');
   if (members().some(m => m.id !== form.mid && m.gid.toLowerCase() === gid.toLowerCase())) return err('這個名字已經有人填了');
   const avail = {};
   for (const d in form.avail) {
@@ -434,7 +529,11 @@ function saveForm() {
   const mainCount = members().filter(m => m.id !== id && m.st === 'main').length;
   const m = { gid, tags: form.tags, avail, st: old ? old.st : (form.mode === 'core' || mainCount < ev.total ? 'main' : 'wait'), group: old ? (old.group || 'gen') : (form.mode === 'core' ? 'core' : 'gen'), at: old ? old.at : Date.now() };
   if (old && old.pin) m.pin = true;
-  if (!form.mid && !form.proxy) { try { localStorage.setItem(myKey(), id); } catch (e) { } }
+  if (!form.mid && !form.proxy) {
+    try { localStorage.setItem(myKey(), id); } catch (e) { }
+    rememberEvent({ id: route.id, title: ev.title, role: 'member', me: id, at: Date.now() });
+    if (mail) sendLink(mail).then(r => { if (r) alert(r); else alert('已寄驗證信到 ' + mail + '。點信裡的連結，之後就能用 email 找回你的報名。'); });
+  }
   form = null;
   save({ ['members.' + id]: m });
 }
@@ -477,6 +576,17 @@ document.addEventListener('input', e => {
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-a]'); if (!b) return;
   const a = b.dataset.a, D = b.dataset;
+  if (route.v === 'mine') {
+    if (a === 'copy') { const ok = await copy(D.t); b.textContent = ok ? '已複製 ✓' : '請長按手動複製'; }
+    else if (a === 'sendmail') {
+      const em = ($('#mail').value || '').trim(), box = $('#mmsg');
+      if (!/^\S+@\S+\.\S+$/.test(em)) { box.style.color = 'var(--bad)'; box.textContent = 'email 格式不太對'; return; }
+      box.style.color = 'var(--ok)'; box.textContent = '寄送中…';
+      const r = await sendLink(em);
+      authMsg = r || ('已寄驗證信到 ' + em + '，請到信箱點連結（沒看到請找垃圾信件匣）。'); render();
+    } else if (a === 'logout') { try { await AU.signOut(auth); } catch (e) { } user = null; authMsg = '已登出。這台裝置上的活動仍會保留。'; render(); }
+    return;
+  }
   if (route.v === 'new') {
     const d = draft;
     if (a === 'adv') d.adv = !d.adv;
@@ -488,19 +598,22 @@ document.addEventListener('click', async e => {
     else if (a === 'sadd') { const n = ($('#sn').value || '').trim(); if (!n) d.err = '先輸入條件名稱'; else if (d.slots.some(s => s.n === n)) d.err = '這個條件已經有了'; else { d.slots.push({ n, c: 1 }); d.err = ''; } }
     else if (a === 'create') {
       d.title = ($('#title').value || '').trim();
+      const em0 = $('#email'); d.email = em0 ? em0.value.trim() : '';
       const days = d.days.filter(x => d.pick[x]);
-      if (!d.title) d.err = '請輸入活動名稱'; else if (!days.length) d.err = '至少選一個候選日期';
+      if (!d.title) d.err = '請輸入活動名稱'; else if (!days.length) d.err = '至少選一個候選日期'; else if (d.email && !/^\S+@\S+\.\S+$/.test(d.email)) d.err = 'email 格式不太對';
       else {
         d.err = ''; const id = rid() + rid(), key = rid() + rid(), ctoken = rid() + rid();
         await db.create(id, { title: d.title, total: d.total, dur: d.dur, days, slots: d.slots, phase: 'prep', windows: {}, lockSig: '', adminHash: await sha(key), coreHash: await sha(ctoken), members: {}, createdAt: Date.now(), expireAt: new Date(Date.now() + 14 * 864e5) });
         d.made = { id, key, ctoken };
         try { localStorage.setItem('mrs-ct:' + id, ctoken); } catch (e) { }
+        rememberEvent({ id, title: d.title, role: 'admin', key, ct: ctoken, at: Date.now() });
+        if (d.email) { d.mailMsg = '寄送中…'; sendLink(d.email).then(r => { d.mailMsg = r || ('已寄驗證信到 ' + d.email + '。請到信箱點信裡的連結，之後就能用這個 email 找回活動。'); if (route.v === 'new') render(); }); }
       }
     }
     else if (a === 'copy') { msg = (await copy(D.t)) ? '已複製' : '複製失敗，請長按連結手動複製'; }
     else if (a === 'open') { location.hash = '#/m/' + draft.made.id + '/' + draft.made.key; draft = null; return; }
     else if (a === 'again') draft = newDraft();
-    { const t = $('#title'); if (t && a !== 'create') d.title = t.value; }
+    { const t = $('#title'); if (t && a !== 'create') d.title = t.value; const e2 = $('#email'); if (e2 && a !== 'create') d.email = e2.value; }
     render(); return;
   }
   if (!ev) return;
@@ -508,9 +621,9 @@ document.addEventListener('click', async e => {
   if (a === 'join') openForm(myEntry() ? myId() : null);
   else if (admin && a === 'proxy') { openForm(null); form.proxy = true; }
   else if (admin && a === 'edit') openForm(D.id);
-  else if (a === 'tag') { const g = $('#gid'); if (g) form.gid = g.value; const i = form.tags.indexOf(D.n); if (i < 0) form.tags.push(D.n); else form.tags.splice(i, 1); render(); }
-  else if (a === 'addr') { const g = $('#gid'); if (g) form.gid = g.value; const w = winsFor(D.d)[0]; (form.avail[D.d] = form.avail[D.d] || []).push(form.mode === 'gen' && w ? { s: w.s, e: w.e } : { s: 540, e: 720 }); render(); }
-  else if (a === 'delr') { const g = $('#gid'); if (g) form.gid = g.value; form.avail[D.d].splice(+D.i, 1); render(); }
+  else if (a === 'tag') { const g = $('#gid'); if (g) form.gid = g.value; const em = $('#email'); if (em) form.email = em.value; const i = form.tags.indexOf(D.n); if (i < 0) form.tags.push(D.n); else form.tags.splice(i, 1); render(); }
+  else if (a === 'addr') { const g = $('#gid'); if (g) form.gid = g.value; const em = $('#email'); if (em) form.email = em.value; const w = winsFor(D.d)[0]; (form.avail[D.d] = form.avail[D.d] || []).push(form.mode === 'gen' && w ? { s: w.s, e: w.e } : { s: 540, e: 720 }); render(); }
+  else if (a === 'delr') { const g = $('#gid'); if (g) form.gid = g.value; const em = $('#email'); if (em) form.email = em.value; form.avail[D.d].splice(+D.i, 1); render(); }
   else if (a === 'save') saveForm();
   else if (a === 'cancel') { form = null; render(); }
   else if (admin && a === 'pin') { const m = ev.members[D.id]; save({ ['members.' + D.id + '.pin']: !m.pin }); }
@@ -524,7 +637,22 @@ document.addEventListener('click', async e => {
   else if (a === 'copy') { msg = (await copy(D.t)) ? '已複製' : '複製失敗'; render(); }
 });
 
+if (auth) {
+  try {
+    if (AU.isSignInWithEmailLink(auth, location.href)) {
+      let em = ''; try { em = localStorage.getItem('mrs-email') || ''; } catch (e) { }
+      if (!em) em = prompt('請輸入你收到驗證信的 email，完成驗證') || '';
+      try { await AU.signInWithEmailLink(auth, em, location.href); authMsg = '驗證成功！你的活動已備份。'; }
+      catch (e) { authMsg = '驗證失敗或連結已過期，請重新寄一封。'; }
+      history.replaceState(null, '', location.origin + location.pathname + '#/mine');
+    }
+    try { await auth.authStateReady(); } catch (e) { }
+    user = auth.currentUser;
+    AU.onAuthStateChanged(auth, u => { user = u; if (u) syncMine(); });
+  } catch (e) { }
+}
 init();
+if (user) syncMine();
 </script>
 </body>
 </html>

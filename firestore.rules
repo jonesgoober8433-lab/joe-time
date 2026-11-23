@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 活動：知道（猜不到的）活動編號就能讀、建立、更新；不能列出所有活動，也不能刪除
+    match /events/{eventId} {
+      allow get: if true;
+      allow create: if true;
+      allow update: if true;
+      allow list, delete: if false;
+    }
+
+    // 我的活動：只有用 email 驗證登入的本人，才能讀寫自己資料夾裡的連結備份
+    match /users/{uid}/events/{eventId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

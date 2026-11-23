@@ -592,7 +592,11 @@ document.addEventListener('click', async e => {
     if (a === 'adv') d.adv = !d.adv;
     else if (a === 'tot') d.total = Math.max(2, Math.min(12, d.total + +D.v));
     else if (a === 'dur') d.dur = +D.v;
-    else if (a === 'day') { if (d.pick[D.d]) delete d.pick[D.d]; else d.pick[D.d] = 1; }
+    else if (a === 'day') {
+      if (d.pick[D.d]) { delete d.pick[D.d]; d.err = ''; }
+      else if (Object.keys(d.pick).length >= 14) d.err = '最多選 14 天，請先取消幾天再選';
+      else { d.pick[D.d] = 1; d.err = ''; }
+    }
     else if (a === 'sc') d.slots[+D.i].c = Math.max(1, Math.min(6, d.slots[+D.i].c + +D.v));
     else if (a === 'sdel') d.slots.splice(+D.i, 1);
     else if (a === 'sadd') { const n = ($('#sn').value || '').trim(); if (!n) d.err = '先輸入條件名稱'; else if (d.slots.some(s => s.n === n)) d.err = '這個條件已經有了'; else { d.slots.push({ n, c: 1 }); d.err = ''; } }

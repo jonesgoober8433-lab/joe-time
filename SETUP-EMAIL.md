@@ -10,14 +10,13 @@
 1. Authentication → **Settings** → **Authorized domains**
 2. 新增 `jonesgoober8433-lab.github.io`（`localhost` 通常已經有）
 
-## 3. 更新 Firestore 規則（先比對再貼）
+## 3. 更新 Firestore 規則
+`firestore.rules` 是你**現有規則原樣保留**，只在最後新增 `users/{uid}/events` 一個區塊（標有「以下是新增的區塊」）。
 1. Firestore Database → **Rules**
-2. **先把目前的規則存一份備份**（複製貼到記事本），再和本資料夾的 `firestore.rules` 比對
-3. 確認沒問題後，貼上 `firestore.rules` 的內容 → **發布**
+2. 先把目前的規則複製存起來備份
+3. 貼上 `firestore.rules` 全部內容 → **發布**
 
-這份規則的重點：
-- `events`：維持用連結讀寫；禁止列出全部活動、禁止刪除
-- `users/{uid}/events`：只有登入的本人能讀寫，別人讀不到你的管理連結
+注意：建立活動的規則限制最多 14 個候選日期，網頁也已限制最多選 14 天。
 
 ## 4. （建議）把信改成中文
 Authentication → **Templates** → **Email link sign-in**：可改寄件人名稱與主旨，例如「喬時間 驗證信」。

@@ -1,15 +1,29 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // 活動：知道（猜不到的）活動編號就能讀、建立、更新；不能列出所有活動，也不能刪除
-    match /events/{eventId} {
+    match /events/{id} {
+      // 只能用完整活動代碼讀取，不能列出所有活動
       allow get: if true;
-      allow create: if true;
-      allow update: if true;
-      allow list, delete: if false;
+      allow list: if false;
+
+      allow create: if request.resource.data.keys().hasAll(['title', 'total', 'dur', 'days', 'slots', 'adminHash', 'coreHash', 'members'])
+        && request.resource.data.members.size() == 0
+        && request.resource.data.days.size() <= 14
+        && request.resource.data.slots.size() <= 12;
+
+      // 活動設定與主辦金鑰雜湊不能被改；成員人數有上限；不能刪整個活動
+      allow update: if request.resource.data.adminHash == resource.data.adminHash
+        && request.resource.data.title == resource.data.title
+        && request.resource.data.total == resource.data.total
+        && request.resource.data.dur == resource.data.dur
+        && request.resource.data.days == resource.data.days
+        && request.resource.data.slots == resource.data.slots
+        && request.resource.data.members.size() <= 40;
+
+      allow delete: if false;
     }
 
+    // ===== 以下是新增的區塊（email 找回用）=====
     // 我的活動：只有用 email 驗證登入的本人，才能讀寫自己資料夾裡的連結備份
     match /users/{uid}/events/{eventId} {
       allow read, write: if request.auth != null && request.auth.uid == uid;

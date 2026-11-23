@@ -156,7 +156,7 @@ const toMin = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m;
 const iso = dt => dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
 const base = () => location.href.split('#')[0];
 const rng = r => tm(r.s) + '–' + tm(r.e);
-const durL = v => v < 60 ? v + ' 分鐘' : (v / 60) + ' 小時';
+const durL = v => { const h = Math.floor(v / 60), m = v % 60; return m ? (h ? h + ' 小時 ' + m + ' 分' : m + ' 分鐘') : h + ' 小時'; };
 
 let route = {}, ev = null, unsub = null, form = null, msg = '', draft = null, adminOk = false, coreOk = false, aerr = '';
 const save = ops => db.patch(route.id, ops);
@@ -224,16 +224,9 @@ const topbar = () => '<div class="top"><a class="brand" href="#/"><i></i>喬時�
 
 function mineHtml() {
   const l = getMine(), root = location.origin + location.pathname;
-  let h = '<div class="narrow">' + topbar() + '<h1>我的活動</h1><p class="lead">你在這台裝置建立或報名過的活動，連結都在這裡。</p>';
-  h += '<div class="card"><h2>📧 用 email 找回活動</h2>';
-  if (!auth) h += '<p class="sub" style="margin:0">目前是測試模式，不支援 email 找回。</p>';
-  else if (user) h += '<p class="sub" style="margin-top:0">已用 <b>' + esc(user.email || '') + '</b> 驗證，你的活動會自動備份。換手機只要再用這個 email 驗證就能找回。</p><button class="s" data-a="logout">登出這台裝置</button>';
-  else {
-    let em = ''; try { em = localStorage.getItem('mrs-email') || ''; } catch (e) { }
-    h += '<p class="sub" style="margin-top:0">輸入 email，我們寄一封信給你，點信裡的連結就能找回（或備份）所有活動。不用密碼。</p><input type="text" id="mail" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(em) + '"><button class="p" data-a="sendmail" style="min-height:48px;font-size:16px">寄驗證信</button>';
-  }
-  h += '<div class="err" id="mmsg" style="color:var(--ok)">' + esc(authMsg) + '</div></div>';
-  if (!l.length) h += '<div class="card"><p class="sub" style="margin:0">還沒有活動。建立一個活動，或在朋友的連結報名後，就會出現在這裡。</p></div>';
+  const bad = /失敗|不對|過期/.test(authMsg);
+  let h = '<div class="narrow">' + topbar() + '<h1>我的活動</h1><p class="lead">這台裝置上建立或報名過的活動，連結都在這裡。</p>';
+  if (!l.length) h += '<div class="card"><p class="sub" style="margin:0">這台裝置還沒有活動。建立一個活動，或在朋友的連結報名後，就會出現在這裡。</p></div>';
   l.forEach(r => {
     const lk = (name, sub, u) => '<p class="sub" style="margin:12px 0 4px"><b>' + name + '</b>　' + sub + '</p><div class="link">' + esc(u) + '</div><div class="row"><button class="s grow" data-a="copy" data-t="' + esc(u) + '">複製</button><a class="btn s grow" style="min-height:38px;font-size:14px" href="' + esc(u) + '">開啟</a></div>';
     h += '<div class="card"><div class="row sp"><h2 style="margin:0">' + esc(r.title || '活動') + '</h2><span class="pill ' + (r.role === 'admin' ? 'ok' : 'warn') + '" style="margin:0">' + (r.role === 'admin' ? '主辦' : '參加者') + '</span></div>';
@@ -244,6 +237,14 @@ function mineHtml() {
     } else h += lk('活動連結', '看名單、修改我的時間', root + '#/e/' + r.id);
     h += '</div>';
   });
+  h += '<div class="card"><h2>📧 換手機也想找回？用 email 備份</h2>';
+  if (!auth) h += '<p class="sub" style="margin:0">目前是測試模式，不支援 email 找回。</p>';
+  else if (user) h += '<p class="sub" style="margin-top:0">已用 <b>' + esc(user.email || '') + '</b> 驗證，上面的活動會自動備份。換手機再用這個 email 驗證，就能找回。</p><button class="s" data-a="logout">登出這台裝置</button>';
+  else {
+    let em = ''; try { em = localStorage.getItem('mrs-email') || ''; } catch (e) { }
+    h += '<p class="sub" style="margin-top:0">上面只存在這台裝置。輸入 email，我們寄一封驗證信，點信裡的連結就能備份；之後在任何裝置驗證同一個 email，都能找回。不用密碼。</p><input type="text" id="mail" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(em) + '"><button class="p" data-a="sendmail" style="min-height:48px;font-size:16px">寄驗證信</button>';
+  }
+  h += '<div class="err" id="mmsg" style="color:var(' + (bad ? '--bad' : '--ok') + ')">' + esc(authMsg) + '</div></div>';
   return h + '</div>';
 }
 
@@ -412,13 +413,12 @@ function newHtml() {
   h += '<div class="legend"><span>平日</span><span class="w">週末</span><span class="s">已選</span></div>';
   h += '<div class="picked">' + (picked.length ? '已選 ' + picked.length + ' 天：' + picked.map(x => dlabel(x).replace('（', '').replace('）', '')).join('、') : '還沒選日期') + '</div></div>';
   if (auth) h += '<div class="card"><label class="l" for="email" style="margin-top:0">📧 你的 email<small>選填，但建議填</small></label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="' + esc(d.email || '') + '"><p class="sub" style="margin:8px 0 0">這是之後<b>找回活動連結</b>的方式：換手機或弄丟連結時，用這個 email 驗證就能找回。只用來寄驗證信，不會發廣告。</p></div>';
-  h += '<div class="card"><button class="adv" data-a="adv" aria-expanded="' + (d.adv ? 'true' : 'false') + '"><span>進階選項 <span class="sub">' + d.total + ' 人以上成團・約 ' + durL(d.dur) + (d.slots.length ? '・' + d.slots.length + ' 項條件' : '') + '</span></span><span>' + (d.adv ? '▲' : '▼') + '</span></button>';
+  h += '<div class="card"><button class="adv" data-a="adv" aria-expanded="' + (d.adv ? 'true' : 'false') + '"><span>進階選項 <span class="sub">' + d.total + ' 人以上成團・約 ' + durL(d.dur) + '</span></span><span>' + (d.adv ? '▲' : '▼') + '</span></button>';
   if (d.adv) {
     h += '<div class="adv-body"><label class="l">至少幾個人能來才成團</label><div class="row sp"><span class="sub">湊到這個人數，結果才會顯示「可成團」</span><span class="row"><button class="stp" data-a="tot" data-v="-1" aria-label="減少">−</button><span class="cnt">' + d.total + '</span><button class="stp" data-a="tot" data-v="1" aria-label="增加">＋</button></span></div>';
     h += '<label class="l">預計聚多久</label><div class="chips">' + [30, 60, 90, 120, 180, 240].map(v => '<button class="chip' + (d.dur === v ? ' on' : '') + '" data-a="dur" data-v="' + v + '">' + durL(v) + '</button>').join('') + '</div>';
-    h += '<label class="l">需要有人符合的條件<small>選填，例如：有車、會主持</small></label>';
-    d.slots.forEach((sl, i) => { h += '<div class="item row sp"><span class="grow">' + esc(sl.n) + '<span class="sub">　至少</span></span><button class="stp" data-a="sc" data-i="' + i + '" data-v="-1" aria-label="減少">−</button><span class="cnt">' + sl.c + '</span><button class="stp" data-a="sc" data-i="' + i + '" data-v="1" aria-label="增加">＋</button><button class="s d" data-a="sdel" data-i="' + i + '">刪除</button></div>'; });
-    h += '<div class="row" style="margin-top:8px"><input type="text" id="sn" placeholder="例如：有車"><button data-a="sadd" style="white-space:nowrap">新增</button></div></div>';
+    const custom = [30, 60, 90, 120, 180, 240].includes(d.dur) ? '' : d.dur;
+    h += '<div class="row" style="margin-top:10px"><span class="sub" style="white-space:nowrap">自己輸入</span><input type="number" id="durc" inputmode="numeric" min="15" max="720" step="5" placeholder="例如 150" value="' + custom + '" style="max-width:140px"><span class="sub">分鐘（15–720）</span></div></div>';
   }
   h += '</div></div>';
   h += '<div class="bar"><div><div class="err" id="nerr">' + esc(d.err) + '</div><button class="p" data-a="create">建立活動，取得連結</button></div></div>';
@@ -603,8 +603,10 @@ document.addEventListener('click', async e => {
     else if (a === 'create') {
       d.title = ($('#title').value || '').trim();
       const em0 = $('#email'); d.email = em0 ? em0.value.trim() : '';
+      d.err = '';
+      const dc0 = $('#durc'); if (dc0 && dc0.value) { const v = Math.round(+dc0.value); if (v >= 15 && v <= 720) d.dur = v; else d.err = '預計時間請填 15–720 分鐘'; }
       const days = d.days.filter(x => d.pick[x]);
-      if (!d.title) d.err = '請輸入活動名稱'; else if (!days.length) d.err = '至少選一個候選日期'; else if (d.email && !/^\S+@\S+\.\S+$/.test(d.email)) d.err = 'email 格式不太對';
+      if (d.err) { } else if (!d.title) d.err = '請輸入活動名稱'; else if (!days.length) d.err = '至少選一個候選日期'; else if (d.email && !/^\S+@\S+\.\S+$/.test(d.email)) d.err = 'email 格式不太對';
       else {
         d.err = ''; const id = rid() + rid(), key = rid() + rid(), ctoken = rid() + rid();
         await db.create(id, { title: d.title, total: d.total, dur: d.dur, days, slots: d.slots, phase: 'prep', windows: {}, lockSig: '', adminHash: await sha(key), coreHash: await sha(ctoken), members: {}, createdAt: Date.now(), expireAt: new Date(Date.now() + 14 * 864e5) });
@@ -617,7 +619,7 @@ document.addEventListener('click', async e => {
     else if (a === 'copy') { msg = (await copy(D.t)) ? '已複製' : '複製失敗，請長按連結手動複製'; }
     else if (a === 'open') { location.hash = '#/m/' + draft.made.id + '/' + draft.made.key; draft = null; return; }
     else if (a === 'again') draft = newDraft();
-    { const t = $('#title'); if (t && a !== 'create') d.title = t.value; const e2 = $('#email'); if (e2 && a !== 'create') d.email = e2.value; }
+    { const t = $('#title'); if (t && a !== 'create') d.title = t.value; const e2 = $('#email'); if (e2 && a !== 'create') d.email = e2.value; const dc = $('#durc'); if (dc && dc.value && a !== 'create' && a !== 'dur') { const v = Math.round(+dc.value); if (v >= 15 && v <= 720) d.dur = v; } }
     render(); return;
   }
   if (!ev) return;

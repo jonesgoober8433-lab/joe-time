@@ -85,6 +85,8 @@ button.d{color:var(--bad);border-color:#E7C3BD}
 .hero .meter{height:8px;border-radius:99px;background:rgba(247,243,234,.25);overflow:hidden;margin:10px 0 6px}
 .hero .meter i{display:block;height:100%;background:#E3C98C;border-radius:99px}
 .hero .tag{display:inline-block;background:#E3C98C;color:#3b2f10;border-radius:999px;font-size:13px;font-weight:700;padding:2px 12px;margin-top:4px}
+a.btn{display:flex;align-items:center;justify-content:center;min-height:48px;border:1px solid var(--ac);border-radius:12px;color:var(--ac);font-weight:700;text-decoration:none;background:var(--card);text-align:center}
+a.btn:hover{background:var(--acbg)}
 .share-main{border:2px solid var(--ac)}
 .copy{width:100%;margin-top:6px}
 .lead{font-size:16px;color:var(--tx2);margin:0 0 4px}
@@ -341,6 +343,19 @@ function summaryHtml() {
   return '<div class="hero"><div class="k">目前最多人可以</div><div class="big">' + dlabel(days[0].d) + ' ' + tm(b.s) + '–' + tm(b.s + ev.dur) + '</div><div class="meter"><i style="width:' + Math.min(100, Math.round(b.set.length / ev.total * 100)) + '%"></i></div><div>' + b.set.length + ' / ' + ev.total + ' 人有空' + (b.ok ? '' : need ? '・還差 ' + need + ' 人' : '') + '</div>' + (b.ok ? '<span class="tag">已達成團人數</span>' : '<span class="tag" style="background:rgba(247,243,234,.2);color:#F7F3EA">尚未成團</span>') + '</div>';
 }
 
+function addCalHtml() {
+  const [y, m, d] = ev.final.date.split('-').map(Number);
+  const st = new Date(y, m - 1, d, 0, ev.final.s), en = new Date(st.getTime() + ev.dur * 60000);
+  const p = n => String(n).padStart(2, '0');
+  const f = t => t.getFullYear() + p(t.getMonth() + 1) + p(t.getDate()) + 'T' + p(t.getHours()) + p(t.getMinutes()) + '00';
+  const names = members().filter(x => x.st === 'main').map(x => x.gid).join('、');
+  const details = '來自喬時間' + (names ? '\n參加：' + names : '') + '\n' + base() + '#/e/' + route.id;
+  const g = 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent(ev.title) + '&dates=' + f(st) + '/' + f(en) + '&details=' + encodeURIComponent(details);
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//joe-time//TW', 'BEGIN:VEVENT', 'UID:' + route.id + '@joe-time', 'DTSTAMP:' + new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, ''), 'DTSTART:' + f(st), 'DTEND:' + f(en), 'SUMMARY:' + ev.title.replace(/[,;\\]/g, c => '\\' + c), 'DESCRIPTION:' + details.replace(/[,;\\]/g, c => '\\' + c).replace(/\n/g, '\\n'), 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  const a = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics);
+  return '<div class="card"><h2>📅 加到行事曆</h2><p class="sub" style="margin-top:0">' + dlabel(ev.final.date) + ' ' + tm(ev.final.s) + '–' + tm(ev.final.s + ev.dur) + '</p><div class="row"><a class="btn grow" href="' + g + '" target="_blank" rel="noopener">Google 行事曆</a><a class="btn grow" href="' + a + '" download="' + esc(ev.title) + '.ics">Apple 行事曆</a></div></div>';
+}
+
 function myEntry() { const id = myId(); return id && ev.members && ev.members[id] ? ev.members[id] : null; }
 
 function render() {
@@ -354,6 +369,7 @@ function render() {
   if (LOCAL) h += '<div class="banner">測試模式：資料只存在這支手機</div>';
   if (route.v === 'member' && ev.phase !== 'open') { app.innerHTML = h + '<div class="card"><h2>主辦還在準備中</h2><p class="sub">開放後這個連結才能填寫，請稍後再回來看看。</p></div>'; return; }
   if (ev.final && route.v !== 'core') h += '<div class="pill ok" style="display:block;font-size:14px;padding:8px 12px">已定案：' + dlabel(ev.final.date) + ' ' + tm(ev.final.s) + '–' + tm(ev.final.s + ev.dur) + '</div>';
+  if (ev.final && (myEntry() || admin)) h += addCalHtml();
   const mine = myEntry();
   const stepsHtml = '<ol class="steps"><li><b>1</b>輸入名字</li><li><b>2</b>點選有空的時間</li><li><b>3</b>按送出</li></ol>';
   if (!admin && !form && !mine) h += '<p class="lead" style="margin-top:8px">主辦想約大家的時間，花 1 分鐘填一下就好。</p>' + stepsHtml;
